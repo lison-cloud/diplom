@@ -1,0 +1,230 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+version: '2.2'
+
+services:
+  keycloak-postgres:
+    image: library/postgres:14
+    container_name: postgres
+    restart: on-failure
+    environment:
+      PGUSER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: pg_isready -d postgres
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    ports:
+      - 5432:5432
+    networks:
+      apisix:
+
+  keycloak:
+    image: customkeycloak:latest
+    container_name: keycloak
+    command:
+      - start --auto-build --log="console,gelf" --log-gelf-host=logstash --log-gelf-port=12201 --log-level="INFO" --db postgres --hostname-strict-https false --hostname-strict false --metrics-enabled=true --proxy edge --http-enabled true --import-realm --spi-user-profile-legacy-user-profile-read-only-attributes *_RES_ACCESS_MODE
+    environment:
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/postgres
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KC_DB_SCHEMA: public
+      KC_FEATURES: preview
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - 8282:8080
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+      logstash:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://0.0.0.0:8080/realms/master"]
+      interval: 30s
+      retries: 3
+      timeout: 5s
+    networks:
+      apisix:
+
+  apisix-dashboard:
+    image: apache/apisix-dashboard:3.0.1-alpine
+    restart: always
+    volumes:
+    - ./dashboard_conf/conf.yaml:/usr/local/apisix-dashboard/conf/conf.yaml
+    - dashdata:/usr/local/apisix-dashboard/logs:rw
+    ports:
+    - "9000:9000"
+    networks:
+      apisix:
+
+  apisix:
+    image: apache/apisix:3.3.0-debian
+    restart: always
+    volumes:
+      - ./apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    depends_on:
+      - etcd
+    ports:
+      - "9180:9180/tcp"
+      - "9080:9080/tcp"
+      - "9091:9091/tcp"
+      - "9443:9443/tcp"
+      - "9092:9092/tcp"
+    networks:
+      apisix:
+
+  etcd:
+    image: bitnami/etcd:3.4.15
+    restart: always
+    volumes:
+      - etcd_data:/bitnami/etcd
+    environment:
+      ETCD_ENABLE_V2: "true"
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+    ports:
+      - "2379:2379/tcp"
+    networks:
+      apisix:
+
+  web1:
+    image: nginx:1.19.0-alpine
+    restart: always
+    volumes:
+      - ./upstream/web1.conf:/etc/nginx/nginx.conf
+    ports:
+      - "9081:80/tcp"
+    environment:
+      - NGINX_PORT=80
+    networks:
+      apisix:
+
+  web2:
+    image: nginx:1.19.0-alpine
+    restart: always
+    volumes:
+      - ./upstream/web2.conf:/etc/nginx/nginx.conf
+    ports:
+      - "9082:80/tcp"
+    environment:
+      - NGINX_PORT=80
+    networks:
+      apisix:
+
+  prometheus:
+    image: prom/prometheus:v2.25.0
+    restart: always
+    volumes:
+      - ./prometheus_conf/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      apisix:
+
+  grafana:
+    image: grafana/grafana:7.3.7
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - "./grafana_conf/provisioning:/etc/grafana/provisioning"
+      - "./grafana_conf/dashboards:/var/lib/grafana/dashboards"
+      - "./grafana_conf/config/grafana.ini:/etc/grafana/grafana.ini"
+      - "./grafana/plugins:/var/lib/grafana/plugins"
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    command:
+      - 'chown -R grafana:grafana /var/lib/grafana/plugins'
+    user: "0:0"
+    networks:
+      apisix:
+  frontend:
+    image: frontend:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    networks:
+      apisix:
+  backend:
+    image: backend:latest
+    restart: always
+    ports:
+      - "5050:5000"
+    networks:
+      apisix:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch-oss:6.8.2
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data:rw
+    environment:
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      discovery.type: "single-node"
+    restart: unless-stopped
+    networks:
+     apisix:
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash-oss:6.8.2
+    volumes:
+      - "./pipelines:/usr/share/logstash/pipeline"
+    ports:
+      - "12201:12201/udp"
+      - "5000:5000"
+      - "9600:9600"
+    networks:
+     apisix:
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: bin/logstash -t
+      interval: 60s
+      timeout: 50s
+      retries: 5
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana-oss:6.8.2
+    ports:
+      - "5601:5601"
+    restart: unless-stopped
+    networks:
+     apisix:
+    depends_on:
+      - elasticsearch
+
+networks:
+  apisix:
+    driver: bridge
+
+volumes:
+  etcd_data:
+    driver: local
+  prometheus-data:
+    driver: local
+  esdata:
+    driver: local
+  dashdata:
+    driver: local
