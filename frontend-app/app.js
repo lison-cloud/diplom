@@ -2,8 +2,8 @@ var express = require('express');
 var app = express();
 var stringReplace = require('string-replace-middleware');
 
-var KC_URL = process.env.KC_URL || "http://docker-node:8282";
-var SERVICE_URL = process.env.SERVICE_URL || "http://docker-node:9080/secured";
+var KC_URL = process.env.KC_URL || "http://localhost:8282";
+var SERVICE_URL = process.env.SERVICE_URL || "http://localhost:9080/secured";
 
 app.use(stringReplace({
    'SERVICE_URL': SERVICE_URL,

@@ -31,7 +31,7 @@ app.get('/public', function (req, res) {
 });
 
 app.get('/', function (req, res) {
-  res.send('<html><body><ul><li><a href="http:docker-node:9080/public">Public endpoint</a></li><li><a href="http://docker-node:9080/secured">Secured endpoint</a></li></ul></body></html>');
+  res.send('<html><body><ul><li><a href="/public">Public endpoint</a></li><li><a href="/secured">Secured endpoint</a></li></ul></body></html>');
 });
 
 app.listen(5000, function () {
